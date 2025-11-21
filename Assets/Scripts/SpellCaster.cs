@@ -1,68 +1,70 @@
 using UnityEngine;
-using TMPro; // Dùng để hiển thị text
+using TMPro;
 
 public class SpellCaster : MonoBehaviour
 {
-    [Header("Ngưỡng Trị Liệu")]
-    public float romThreshold = 80.0f; // Phải giơ tay cao hơn 80 độ
-    public float compensationThreshold = 15.0f; // Nghiêng thân > 15 độ là sai
-
     [Header("UI Phản Hồi")]
-    public TextMeshProUGUI exercisePrompt; // Text hướng dẫn
-    public GameObject warningIcon; // Icon/Text cảnh báo
+    public TextMeshProUGUI exercisePrompt;
+    public GameObject warningIcon; // Có thể dùng làm icon "Sẵn sàng"
 
-    private bool isSpellReady = true; // Cờ để tránh spam phép
+    [Header("Hiệu Ứng")]
+    public GameObject explosionPrefab;
+    public AudioClip explosionSound;
+    private AudioSource audioSource;
+
+    private bool isCharged = false; // Biến kiểm tra đã "nạp đạn" chưa
 
     void Start()
     {
-        warningIcon.SetActive(false); // Ẩn cảnh báo
-        exercisePrompt.text = "Bài tập: GIƠ TAY NGANG!";
+        if(warningIcon) warningIcon.SetActive(false);
+        audioSource = GetComponent<AudioSource>();
+        if (audioSource == null) audioSource = gameObject.AddComponent<AudioSource>();
     }
 
     void Update()
     {
-        // 1. Lấy dữ liệu từ Singleton
-        float rom = OpenCapDataManager.Instance.currentShoulderAngle;
-        float comp = Mathf.Abs(OpenCapDataManager.Instance.currentTrunkLean); // Lấy trị tuyệt đối
+        // 1. Lấy dữ liệu Nắm/Xòe từ Python
+        bool isFist = OpenCapDataManager.Instance.isFist;
 
-        // 2. Kiểm tra Bù Trừ (luôn luôn kiểm tra)
-        if (comp > compensationThreshold)
+        // 2. Logic Game: NẮM ĐỂ NẠP -> XÒE ĐỂ BẮN
+        
+        if (isFist)
         {
-            warningIcon.SetActive(true);
+            // Đang nắm tay -> Nạp đạn
+            if (!isCharged)
+            {
+                isCharged = true;
+                if(exercisePrompt) exercisePrompt.text = "ĐANG NẮM: Đã nạp đạn! Xòe tay để bắn!";
+                if(warningIcon) warningIcon.SetActive(true); // Hiển thị icon sẵn sàng
+            }
         }
         else
         {
-            warningIcon.SetActive(false);
-        }
-
-        // 3. Kiểm tra Kích hoạt Phép
-        // Điều kiện: Sẵn sàng + Đạt ROM + KHÔNG Bù trừ
-        if (isSpellReady && rom > romThreshold && comp < compensationThreshold)
-        {
-            Debug.Log("PHÉP KÍCH HOẠT!");
-            ActivateSpell();
-            isSpellReady = false; // Phải hạ tay xuống mới được làm lại
-        }
-
-        // 4. Kiểm tra Reset Phép (Khi người chơi hạ tay xuống)
-        if (!isSpellReady && rom < 30.0f) // Hạ tay về dưới 30 độ
-        {
-            isSpellReady = true;
+            // Đang xòe tay -> Nếu đã nạp thì bắn
+            if (isCharged)
+            {
+                ActivateSpell();
+                isCharged = false; // Bắn xong phải nắm lại mới được bắn tiếp
+                
+                if(exercisePrompt) exercisePrompt.text = "ĐANG XÒE: Hãy nắm tay lại!";
+                if(warningIcon) warningIcon.SetActive(false); // Tắt icon
+            }
         }
     }
 
     void ActivateSpell()
     {
-        // Tìm TẤT CẢ kẻ thù đang có
+        // (Giữ nguyên logic tìm và diệt quái cũ)
         GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
-
-        foreach (GameObject enemy in enemies)
+        if (enemies.Length > 0)
         {
-            // (Tùy chọn: Thêm hiệu ứng nổ ở đây)
-            Destroy(enemy);
+            if (explosionSound) audioSource.PlayOneShot(explosionSound);
+            foreach (GameObject enemy in enemies)
+            {
+                if (explosionPrefab) Instantiate(explosionPrefab, enemy.transform.position, Quaternion.identity);
+                Destroy(enemy);
+            }
+            GameManager.Instance.AddScore(100 * enemies.Length);
         }
-
-        // Cộng điểm
-        GameManager.Instance.AddScore(100 * enemies.Length); // Tiêu diệt càng nhiều, điểm càng cao
     }
 }

@@ -4,38 +4,28 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
+using System.Threading;
 
-// Đây là một Singleton, nghĩa là nó chỉ tồn tại 1 lần
-// và các script khác có thể gọi nó
 public class OpenCapDataManager : MonoBehaviour
 {
     public static OpenCapDataManager Instance { get; private set; }
 
-    // Dữ liệu thời gian thực từ Python
-    public float currentShoulderAngle = 0f;
-    public float currentTrunkLean = 0f;
+    // Biến mới: Trạng thái tay (True = Nắm, False = Xòe)
+    public volatile bool isFist = false;
 
     private TcpClient client;
     private StreamReader reader;
-    private bool isConnected = false;
+    private bool isRunning = false;
 
     private void Awake()
     {
-        // Thiết lập Singleton
-        if (Instance == null)
-        {
-            Instance = this;
-            DontDestroyOnLoad(gameObject); // Giữ nó tồn tại khi chuyển scene
-        }
-        else
-        {
-            Destroy(gameObject);
-        }
+        if (Instance == null) { Instance = this; DontDestroyOnLoad(gameObject); }
+        else { Destroy(gameObject); }
     }
 
     void Start()
     {
-        // Chạy kết nối trong một luồng (thread) riêng để không làm treo game
+        isRunning = true;
         ConnectToServer();
     }
 
@@ -43,38 +33,48 @@ public class OpenCapDataManager : MonoBehaviour
     {
         Task.Run(() =>
         {
-            try
+            while (isRunning)
             {
-                client = new TcpClient("127.0.0.1", 5000);
-                reader = new StreamReader(client.GetStream(), Encoding.UTF8);
-                isConnected = true;
-                Debug.Log("--- CLIENT: Đã kết nối tới Server Python! ---");
-
-                // Vòng lặp nhận dữ liệu
-                while (isConnected && client.Connected)
+                try
                 {
-                    string message = reader.ReadLine(); // Đọc cho đến khi gặp \n
-                    if (message != null)
+                    if (client == null || !client.Connected)
                     {
-                        // Parse JSON và cập nhật vào biến
-                        PoseData data = JsonUtility.FromJson<PoseData>(message);
-                        currentShoulderAngle = data.rom;
-                        currentTrunkLean = data.comp;
+                        client = new TcpClient();
+                        var result = client.BeginConnect("127.0.0.1", 5000, null, null);
+                        bool success = result.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(1));
+
+                        if (success)
+                        {
+                            client.EndConnect(result);
+                            reader = new StreamReader(client.GetStream(), Encoding.UTF8);
+                            Debug.Log("<color=green>--- ĐÃ KẾT NỐI VỚI PYTHON HANDS ---</color>");
+                        }
+                        else { client.Close(); }
+                    }
+
+                    if (client != null && client.Connected)
+                    {
+                        string message = reader.ReadLine();
+                        if (message != null)
+                        {
+                            PoseData data = JsonUtility.FromJson<PoseData>(message);
+                            if (data != null)
+                            {
+                                isFist = data.isFist; // Cập nhật trạng thái nắm tay
+                            }
+                        }
+                        else { client.Close(); }
                     }
                 }
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"Lỗi Socket: {e.Message}");
-                isConnected = false;
+                catch (Exception) { if (client != null) client.Close(); }
+                Thread.Sleep(50); // Giảm delay xuống 50ms cho nhạy hơn với thao tác tay
             }
         });
     }
 
     void OnDestroy()
     {
-        // Dọn dẹp khi game tắt
-        isConnected = false;
+        isRunning = false;
         if (reader != null) reader.Close();
         if (client != null) client.Close();
     }
