@@ -27,6 +27,7 @@ public void AddScore(int amount)
         gameOverPanel.SetActive(false); // Ẩn UI thua lúc đầu
         Time.timeScale = 1; // Đảm bảo game chạy
     }
+    
 
     public void GameOver()
     {
